@@ -1,0 +1,558 @@
+
+left equ 0
+top equ 2
+row equ 15
+col equ 40
+right equ left+col
+bottom equ top+row
+
+.model small
+.data         
+    	msg db "THE SNAKE GAME! ARE YOU READY?!",0
+    	instructions db 0AH,0DH,"Use a - Left, s - Down, d - Right and w - Up to control your snake",0AH,0DH,"Use q anytime to quit",0DH,0AH, "Press any key to continue$"
+    	quitmsg db ">>GAME OVER<<",0
+    	gameovermsg db "Better Luck Next Time!!", 0
+    	scoremsg db "Score: ",0
+    	head db '^',10,10
+    	body db '*',10,11, 3*15 DUP(0)
+    	segmentcount db 1
+    	foodpresent db 1
+    	food1 db 8
+    	food2 db 8
+    	gameover db 0
+    	quit db 0  
+    	timertime db 5
+    	stor dw 0
+
+.stack
+    	dw   128  dup(0)
+
+.code
+main proc far
+	mov ax, @data
+	mov ds, ax
+	mov ax, 0b800H
+	mov es, ax
+
+	;clearing the screen
+	mov ax, 0003H
+	int 10H
+
+	lea bx, msg
+	mov dx,00
+	call stringwriter
+
+	lea dx, instructions
+	mov ah, 09H
+	int 21h
+
+	mov ah, 07h
+	int 21h
+	mov ax, 0003H
+	int 10H
+    	call boundary      
+   
+mainloop:      
+    	call timer            
+    	lea bx, msg
+    	mov dx, 00
+    	call stringwriter
+    	call move
+    	cmp gameover,1
+    	je endofgame
+   
+    	call keypress
+    	cmp quit, 1
+    	je exit_loop
+    	call snakefood
+    	call draw
+   
+    	;TODO: check gameover and quit
+   
+    	jmp mainloop
+   
+endofgame:
+    	mov ax, 0003H
+	int 10H
+    	mov timertime, 100
+    	mov dx, 0000H
+    	lea bx, gameovermsg
+    	call stringwriter
+    	call timer    
+    	jmp exitgame    
+   
+exit_loop:
+    	mov ax, 0003H
+	int 10H    
+    	mov timertime, 100
+    	mov dx, 0000H
+    	lea bx, quitmsg
+    	call stringwriter
+    	call timer    
+    	jmp exitgame    
+
+
+exitgame: 
+	mov ax, 0003H
+	int 10h    
+	mov ax, 4c00h
+	int 21h 
+
+timer proc
+    	mov ah, 00
+    	int 1Ah
+    	mov bx, dx
+   
+jmp_timer:
+    	int 1Ah
+    	sub dx, bx  
+    	cmp dl, timertime                                                      
+    	jl jmp_timer    
+    	ret
+ 
+timer endp
+   
+snakefood proc
+    	mov ch, food2
+    	mov cl, food1
+regenerate:
+   
+    	cmp foodpresent, 1
+    	je ret_foodpresent
+    	mov ah, 00
+    	int 1Ah
+    	push dx
+    	mov ax, dx
+    	xor dx, dx
+    	xor bh, bh
+    	mov bl, row
+    	dec bl
+    	div bx
+    	mov food2, dl
+    	inc food2
+ 
+    	pop ax
+    	mov bl, col
+    	dec dl
+    	xor bh, bh
+    	xor dx, dx
+    	div bx
+    	mov food1, dl
+    	inc food1
+   
+    	cmp food1, cl
+    	jne ignore
+    	cmp food2, ch
+    	jne ignore
+    	jmp regenerate            
+
+ignore:
+    	mov al, food1
+    	ror al,1
+    	jc regenerate
+
+    	add food2, top
+    	add food1, left
+   
+    	mov dh, food2
+    	mov dl, food1
+    	call read
+    	cmp bl, '*'
+    	je regenerate
+    	cmp bl, '^'
+    	je regenerate
+    	cmp bl, '<'
+    	je regenerate
+    	cmp bl, '>'
+    	je regenerate
+    	cmp bl, 'v'
+    	je regenerate    
+   
+ret_foodpresent:
+    	ret
+snakefood endp
+
+
+display_digit proc
+    	add dl, '0'
+    	mov ah, 02H
+    	int 21H
+    	ret
+display_digit endp  
+   
+display_number proc    
+    	test ax,ax
+    	jz retz
+    	xor dx, dx
+    	mov bx,10
+    	div bx     ;display_number ax first.
+    	push dx
+    	call display_number  
+    	pop dx
+    	call display_digit
+    	ret
+retz:
+    	mov ah, 02  
+    	ret    
+display_number endp  
+
+cursor_position proc
+    	mov ah, 02H
+    	push bx
+    	mov bh,0
+    	int 10h
+    	pop bx
+    	ret
+cursor_position endp
+
+draw proc
+    	lea bx, scoremsg
+    	mov dx, 0109
+    	call stringwriter
+   
+    	add dx, 7
+    	call cursor_position
+    	mov al, segmentcount
+    	dec al
+    	xor ah, ah
+    	call display_number
+       
+    	lea si, head
+draw_loop:
+    	mov bl, ds:[si]
+    	test bl, bl
+    	jz out_draw
+    	mov dx, ds:[si+1]
+    	call write
+    	add si,3  
+    	jmp draw_loop
+
+out_draw:
+    	mov bl, 'O'
+    	mov dh, food2
+    	mov dl, food1
+    	call write
+    	mov foodpresent, 1
+   
+    	ret  
+draw endp
+
+readchar proc
+    	mov ah, 01H
+    	int 16H
+    	jnz keybdpressed:
+    	xor dl, dl
+    	ret
+keybdpressed:
+    	mov ah, 00H
+    	int 16H
+    	mov dl,al
+    	ret
+
+readchar endp                    
+
+keypress proc
+
+    	call readchar
+    	cmp dl, 0
+    	je next_14
+
+    	cmp dl, 'w'
+    	jne next_11
+    	cmp head, 'v'
+    	je next_14
+    	mov head, '^'
+    	ret
+next_11:
+    	cmp dl, 's'
+    	jne next_12
+    	cmp head, '^'
+    	je next_14
+    	mov head, 'v'
+    	ret
+next_12:
+    	cmp dl, 'a'
+    	jne next_13
+    	cmp head, '>'
+    	je next_14
+    	mov head, '<'
+    	ret
+next_13:
+    	cmp dl, 'd'
+    	jne next_14
+    	cmp head, '<'
+    	je next_14
+    	mov head,'>'
+next_14:    
+    	cmp dl, 'q'
+    	je quit_keypress
+    	ret    
+quit_keypress:  
+    	;conditions for quitting in here please  
+    	inc quit
+    	ret
+   
+keypress endp
+                  
+move proc    
+    	mov bx, offset head
+
+    	xor ax, ax
+    		mov al, [bx]
+    	push ax
+    	inc bx
+    	mov ax, [bx]
+    	inc bx    
+    	inc bx
+    	xor cx, cx
+l:      
+    	mov si, [bx]
+    	test si, [bx]
+    	jz outside
+    	inc cx    
+    	inc bx
+    	mov dx,[bx]
+    	mov [bx], ax
+    	mov ax,dx
+    	inc bx
+    	inc bx
+    	jmp l
+   
+outside:    
+
+    	pop ax
+    	push dx
+ 
+    	lea bx, head
+    	inc bx
+    	mov dx, [bx]
+   
+    	cmp al, '<'
+    	jne next_1:
+    	dec dl
+    	dec dl
+    	jmp check_head
+next_1:
+    	cmp al, '>'
+    	jne next_2                
+    	inc dl
+    	inc dl
+    	jmp check_head
+   
+next_2:
+    	cmp al, '^'
+    	jne next_3
+    	dec dh              
+
+    	jmp check_head
+   
+next_3:
+    	;must be 'v'
+    	inc dh
+   
+check_head:    
+    	mov [bx],dx 
+    	call read ;dx
+   
+    	cmp bl, 'O'
+    	je sounder
+   
+    	;if fruit was not eaten, then clear the last segment,
+    	mov cx, dx
+    	pop dx
+    	cmp bl, '*'    ;the snake bit itself, gameover
+    	je sounder_end
+    	mov bl, 0
+    	call write
+    	mov dx, cx
+  
+    	;check whether the snake is within the boundary
+    	cmp dh, top
+    	je sounder_end
+    	cmp dh, bottom
+    	je sounder_end
+    	cmp dl,left
+    	je sounder_end
+    	cmp dl, right
+    	je sounder_end
+   
+    	ret
+sounder:
+	mov ax,4560
+	mov stor,ax
+	mov al,0B6H
+	out 43H,al
+	mov ax,stor
+	out 42H,al
+	mov al,ah
+	out 42H,al
+	in al,061H
+	or al,03H
+	out 61H,al
+	call timer
+	and al,0FCH
+	out 61H,al
+	je food_eaten
+	ret
+
+sounder_end:
+	mov ax,2280
+	mov stor,ax
+	mov al,0B6H
+	out 43H,al
+	mov ax,stor
+	out 42H,al
+	mov al,ah
+	out 42H,al
+	in al,061H
+	or al,03H
+	out 61H,al
+	call timer
+	and al,0FCH
+	out 61H,al
+	je game_over
+	ret
+
+game_over:
+    	inc gameover
+    	ret
+food_eaten:    
+
+    	; add a new segment then
+    	mov al, segmentcount
+    	xor ah, ah
+   
+    	lea bx, body
+    	mov cx, 3
+    	mul cx
+   
+    	pop dx
+    	add bx, ax
+    	mov byte ptr ds:[bx], '*'
+    	mov [bx+1], dx
+    	inc segmentcount
+    	mov dh, food2
+    	mov dl, food1
+    	mov bl, 0
+    	call write
+    	mov foodpresent, 0  
+    	ret
+move endp
+     
+boundary proc
+    	mov dh, top
+    	mov dl, left
+    	mov cx, col
+    	mov bl, '*'
+l1:                
+    	call write
+    	inc dl
+    	loop l1
+   
+    	mov cx, row
+l2:
+    	call write
+    	inc dh
+    	loop l2
+   
+    	mov cx, col
+l3:
+    	call write
+    	dec dl
+    	loop l3
+
+    	mov cx, row    
+l4:
+    	call write    
+    	dec dh
+    	loop l4    
+   
+    	ret
+boundary endp
+
+write proc
+    	push dx
+    	mov ax, dx
+    	and ax, 0FF00H
+    	shr ax, 1
+    	shr ax, 1
+    	shr ax, 1
+    	shr ax, 1
+    	shr ax, 1
+    	shr ax, 1
+    	shr ax, 1
+    	shr ax, 1	
+    
+    	push bx
+    	mov bh, 160
+    	mul bh
+    	pop bx
+    	and dx, 0FFH
+    	shl dx,1
+    	add ax, dx
+    	mov di, ax
+    	mov es:[di], bl
+    	pop dx
+    	ret    
+write endp
+           
+read proc
+    	push dx
+    	mov ax, dx
+    	and ax, 0FF00H
+    	shr ax, 1 
+    	shr ax, 1 
+    	shr ax, 1 
+    	shr ax, 1 
+    	shr ax, 1 
+    	shr ax, 1 
+    	shr ax, 1 
+    	shr ax, 1 
+  
+    	push bx
+    	mov bh, 160
+    	mul bh
+    	pop bx
+    	and dx, 0FFH
+    	shl dx,1
+    	add ax, dx
+    	mov di, ax
+    	mov bl,es:[di]
+    	pop dx
+    	ret
+read endp        
+
+stringwriter proc
+    	push dx
+    	mov ax, dx
+    	and ax, 0FF00H
+    	shr ax, 8
+   
+    	push bx
+    	mov bh, 160
+    	mul bh
+   
+    	pop bx
+    	and dx, 0FFH
+    	shl dx,1
+    	add ax, dx
+    	mov di, ax
+loop_stringwriter:
+   
+    	mov al, [bx]
+    	test al, al
+    	jz exit_stringwriter
+    	mov es:[di], al
+    	inc di
+    	inc di
+    	inc bx
+    	jmp loop_stringwriter
+
+exit_stringwriter:
+    	pop dx
+    	ret 
+stringwriter endp
+    
+ends    
+     
+end start
